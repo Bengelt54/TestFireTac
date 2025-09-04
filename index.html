@@ -601,17 +601,16 @@
         });
 
 // --- Measurement Tool ---
-let isDrawingPolygon = false; // NEW: Flag for polygon drawing mode
-let polygonPoints = []; // NEW: Array to store the polygon's vertices
-let tempPolyline = null; // NEW: A temporary line to show the user the shape as they draw
-let tempVertexMarkers = L.layerGroup(); // NEW: Group to hold markers for each clicked point
+let isDrawingPolygon = false;
+let polygonPoints = [];
+let tempPolyline = null;
+let tempVertexMarkers = L.layerGroup();
 
 const measureBuildingBtn = document.getElementById('measureBuildingBtn');
 measureBuildingBtn.addEventListener('click', () => {
     isDrawingPolygon = true;
-    polygonPoints = []; // Reset points
+    polygonPoints = [];
     
-    // Clean up any previous drawings
     if (tempPolyline) map.removeLayer(tempPolyline);
     tempVertexMarkers.clearLayers();
     
@@ -620,61 +619,67 @@ measureBuildingBtn.addEventListener('click', () => {
     map.getContainer().style.cursor = 'crosshair';
     map.addLayer(tempVertexMarkers);
 
-    alert("Click points on the map to trace the building's outline.\nDouble-click the last point to finish and calculate the area.");
+    // CHANGED: Updated instructions for the user
+    alert("Click points to trace the building's outline.\nClick the first point again to finish, or double-click anywhere.");
 });
 
-// Add a point on each single click
-map.on('click', (e) => {
-    if (!isDrawingPolygon) return;
+// NEW: A dedicated function to finalize the polygon measurement
+function finishPolygonDrawing() {
+    if (!isDrawingPolygon || polygonPoints.length < 3) return;
 
-    polygonPoints.push(e.latlng);
-
-    // Add a small circle marker for the vertex
-    L.circleMarker(e.latlng, { radius: 4, color: '#ff7800', fillOpacity: 0.8 }).addTo(tempVertexMarkers);
-
-    // Redraw the temporary polyline
-    if (tempPolyline) {
-        map.removeLayer(tempPolyline);
-    }
-    tempPolyline = L.polyline(polygonPoints, { color: '#ff7800', weight: 3, dashArray: '5, 5' }).addTo(map);
-});
-
-// Finish drawing on double-click
-map.on('dblclick', (e) => {
-    if (!isDrawingPolygon || polygonPoints.length < 3) return; // Need at least 3 points for a polygon
-
-    // Finalize and calculate
     isDrawingPolygon = false;
     map.dragging.enable();
     map.getContainer().style.cursor = '';
 
-    // Convert Leaflet LatLngs to GeoJSON format [lng, lat] for Turf.js
-    // Also, close the polygon by adding the first point to the end of the array
     const turfCoords = polygonPoints.map(p => [p.lng, p.lat]);
-    turfCoords.push(turfCoords[0]); // Close the ring
+    turfCoords.push(turfCoords[0]); // Close the ring for valid GeoJSON
 
     const turfPolygon = turf.polygon([turfCoords]);
     const areaInSqMeters = turf.area(turfPolygon);
-    const areaInSqFt = Math.round(areaInSqMeters * 10.7639); // Conversion factor for sq meters to sq feet
+    const areaInSqFt = Math.round(areaInSqMeters * 10.7639);
 
-    // Clean up the temporary drawing layers
     if (tempPolyline) map.removeLayer(tempPolyline);
     tempVertexMarkers.clearLayers();
     map.removeLayer(tempVertexMarkers);
     
-    // Reset state
     polygonPoints = [];
     tempPolyline = null;
 
-    // Ask user to confirm/edit the calculated value
     const userInput = prompt(`Estimated area: ${areaInSqFt} sq ft. Enter new value or confirm:`, areaInSqFt);
     if (userInput !== null) {
         document.getElementById('preplanSqFt').value = closestSqFtCategory(userInput);
         document.getElementById('preplanSqFt').dataset.rawSqFt = userInput;
     }
 
-    // Reopen the preplan modal
     preplanModal.style.display = 'block';
+}
+
+// Add a point on each single click
+map.on('click', (e) => {
+    if (!isDrawingPolygon) return;
+
+    // NEW: Check if the user clicked near the starting point to auto-finish
+    if (polygonPoints.length > 2) {
+        const firstPoint = polygonPoints[0];
+        // distanceTo() returns distance in meters. 15 meters is a generous click radius.
+        if (e.latlng.distanceTo(firstPoint) < 15) {
+            finishPolygonDrawing();
+            return; // Exit to prevent adding a new point
+        }
+    }
+
+    polygonPoints.push(e.latlng);
+    L.circleMarker(e.latlng, { radius: 4, color: '#ff7800', fillOpacity: 0.8 }).addTo(tempVertexMarkers);
+
+    if (tempPolyline) {
+        map.removeLayer(tempPolyline);
+    }
+    tempPolyline = L.polyline(polygonPoints, { color: '#ff7800', weight: 3, dashArray: '5, 5' }).addTo(map);
+});
+
+// Finish drawing on double-click (calls the new function)
+map.on('dblclick', (e) => {
+    finishPolygonDrawing();
 });
 
 // Helper: map raw sqft to dropdown category
