@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Fireground Preplan — Pumper, Line, Hydrant Recommender (MVP)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin=""
+    />
+    <script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+    ></script>
+
+    <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+    <style>
+        html, body { height: 100%; margin: 0; }
+        #app { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
+        #sidebar {
+            box-sizing: border-box;
+            padding: 12px 14px;
+            border-right: 1px solid #ddd;
+            overflow: auto;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        }
+        #map { height: 100%; }
+        h1 { font-size: 18px; margin: 0 0 8px; }
+        h2 { font-size: 14px; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: .03em; color: #444; }
+        .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+        button {
+            cursor: pointer; border: 1px solid #bbb; background: #fff; border-radius: 6px;
+            padding: 8px 10px; font-weight: 600;
+        }
+        button.primary { background: #0a66ff; color: #fff; border-color: #0a66ff; }
+        button.ghost { background: #f7f7f7; }
+        select, input[type="number"], input[type="text"], textarea {
+            width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #bbb; box-sizing: border-box;
+        }
+        .card {
+            border: 1px solid #e4e4e4; border-radius: 8px; padding: 10px; background: #fff; margin-bottom: 10px;
+        }
+        .muted { color: #666; font-size: 12px; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+        .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px; font-size: 14px; }
+        .kv div:nth-child(odd) { color: #444; }
+        .kv div:nth-child(even) { font-weight: 600; }
+        .legend { font-size: 12px; color: #444; }
+        .legend span.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+
+        /* Custom styles for the preplan creation modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgb(0,0,0);
+            background-color: rgba(0,0,0,0.4);
+            backdrop-filter: blur(5px);
+            padding-top: 60px;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 24px;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            animation-name: animatetop;
+            animation-duration: 0.4s;
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+        }
+        .leaflet-popup-content {
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .leaflet-popup-content .btnrow {
+            margin-bottom: 0;
+        }
+        .leaflet-popup-content h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+        }
+        .leaflet-popup-content p {
+            margin: 0;
+        }
+        .photo-preview-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .photo-preview-wrapper {
+            position: relative;
+        }
+        .photo-preview {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+        }
+        .photo-delete-btn {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #d62728;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        @keyframes animatetop {
+            from {top:-300px; opacity:0}
+            to {top:0; opacity:1}
+        }
+        .confirm-delete {
+            display: none;
+            background: #fff;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-top: 8px;
+        }
+
+        /* Styles for the expanded image modal */
+        #photoModal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.8);
+            backdrop-filter: blur(8px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        #photoModal .modal-content {
+            background-color: transparent;
+            margin: auto;
+            padding: 0;
+            box-shadow: none;
+            max-width: 90%;
+            max-height: 90%;
+            animation-name: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        #expandedImage {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 15px;
+            right: 25px;
+            color: #fff;
+            font-size: 40px;
+            font-weight: bold;
+            transition: 0.3s;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="sidebar">
+            <h1>Fireground Preplan (Prototype)</h1>
+
+            <div class="card">
+                <h2>Workflow</h2>
+                <ol style="margin:0 0 6px 18px">
+                    <li>Click a button to select your placement mode.</li>
+                    <li>Click on the map to place the item.</li>
+                </ol>
+                <div class="btnrow">
+                    <button id="btnPumper" class="primary">Place Pumper</button>
+                    <button id="btnBuilding" class="primary">Select Building</button>
+                    <button id="btnPreplan" class="primary">Create Preplan</button>
+                    <button id="btnHydrant" class="primary">Place Hydrant</button>
+                    <button id="btnReset" class="ghost">Reset</button>
+                </div>
+                <label for="btype">Building Type</label>
+                <select id="btype">
+                    <option value="">— choose —</option>
+                    <option value="residential">Residential (1–2 family)</option>
+                    <option value="multires">Multi-Residential (garden/MDU)</option>
+                    <option value="commercial">Commercial (mercantile/office)</option>
+                    <option value="industrial">Industrial/Warehouse</option>
+                    <option value="highrise">High-Rise/Standpipe</option>
+                    <option value="school">School/Assembly</option>
+                </select>
+            </div>
+
+            <div class="card">
+                <h2>Saved Hydrants</h2>
+                <p class="muted">Click on a hydrant on the map to edit or delete it.</p>
+            </div>
+
+            <div class="card">
+                <h2>Results</h2>
+                <div class="kv">
+                    <div>Pumper</div><div id="pumperVal" class="mono">—</div>
+                    <div>Building</div><div id="buildingVal" class="mono">—</div>
+                    <div>Distance (ft)</div><div id="distVal">—</div>
+                    <div>Suggested Stretch (ft)</div><div id="stretchVal">—</div>
+                    <div>Nearest Hydrant</div><div id="hydrantVal" class="mono">—</div>
+                    <div>Hydrant Distance (ft)</div><div id="hydrantDistVal">—</div>
+                </div>
+            </div>
+
+            <div class="card" id="recCard">
+                <h2>Recommendations</h2>
+                <div id="recLine"><i class="muted">Pick a building type to see line recommendations.</i></div>
+                <div style="margin-top:6px" class="muted">
+                    Notes: Distance is straight-line (as the crow flies). Real stretches will be longer around obstacles; add a safety factor.
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Map Legend</h2>
+                <div class="legend">
+                    <div><span class="dot" style="background:#1f77b4"></span>Pumper</div>
+                    <div><span class="dot" style="background:#d62728"></span>Building</div>
+                    <div><span class="dot" style="background:#2ca02c"></span>Hydrant</div>
+                    <div><span class="dot" style="background:#9467bd"></span>Recommended Hydrant</div>
+                    <div><span class="dot" style="background:#f59e0b"></span>Preplan</div>
+                    <div><span class="dot" style="background:#c0c0c0;border-color:#5a5a5a;"></span>Standpipe</div>
+                    <div><span class="dot" style="background:#319795;border-color:#0f4c4b;"></span>FDC</div>
+                </div>
+            </div>
+
+            <div class="muted">
+                <p><b>Customize:</b> Edit SOP rules in the script section near the top.</p>
+            </div>
+        </div>
+        <div id="map"></div>
+    </div>
+
+    <!-- The Preplan Modal -->
+    <div id="preplanModal" class="modal">
+        <div class="modal-content">
+            <h2 id="modalTitle">Create New Preplan</h2>
+            <form id="preplanForm" class="flex flex-col gap-4">
+                <input type="hidden" id="preplanIndex">
+                <div>
+                    <label for="preplanName" class="block text-sm font-medium text-gray-700">Name:</label>
+                    <input type="text" id="preplanName" name="preplanName" required>
+                </div>
+                <div class="btnrow" style="margin-top: 16px; justify-content: flex-start;">
+                    <button type="button" class="ghost" id="addStandpipeBtn">Add Standpipe</button>
+                    <button type="button" class="ghost" id="addFDCBtn">Add FDC</button>
+					<button type="button" class="ghost" id="measureBuildingBtn">Measure Building</button>
+                </div>
+                <div>
+                    <label for="preplanHazards" class="block text-sm font-medium text-gray-700">Hazards:</label>
+                    <textarea id="preplanHazards" name="preplanHazards" rows="3"></textarea>
+                </div>
+                <div>
+                    <label for="preplanNotes" class="block text-sm font-medium text-gray-700">Notes:</label>
+                    <textarea id="preplanNotes" name="preplanNotes" rows="5"></textarea>
+                </div>
+                <div>
+                    <label for="preplanPhotos" class="block text-sm font-medium text-gray-700">Photos:</label>
+                    <input type="file" id="preplanPhotos" name="preplanPhotos" multiple accept="image/*">
+                    <div id="photoPreviewContainer" class="photo-preview-container"></div>
+                </div>
+                <div>
+                    <label for="preplanFloors" class="block text-sm font-medium text-gray-700">Number of Floors:</label>
+                    <select id="preplanFloors" name="preplanFloors">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5+">5+</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="preplanSqFt" class="block text-sm font-medium text-gray-700">Square Footage:</label>
+                    <select id="preplanSqFt" name="preplanSqFt">
+                        <option value="<2,500"><2,500 sq ft</option>
+                        <option value="2,500-5,000">2,500 - 5,000 sq ft</option>
+                        <option value="5,000-10,000">5,000 - 10,000 sq ft</option>
+                        <option value=">10,000">>10,000 sq ft</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="preplanOccupancy" class="block text-sm font-medium text-gray-700">Occupancy Type:</label>
+                    <select id="preplanOccupancy" name="preplanOccupancy">
+                        <option value="residential">Residential</option>
+                        <option value="commercial">Commercial</option>
+                        <option value="industrial">Industrial</option>
+                        <option value="school">School</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="preplanSprinkler" class="block text-sm font-medium text-gray-700">Sprinkler System:</label>
+                    <select id="preplanSprinkler" name="preplanSprinkler">
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                        <option value="unknown">Unknown</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="preplanFireAlarm" class="block text-sm font-medium text-gray-700">Fire Alarm System:</label>
+                    <select id="preplanFireAlarm" name="preplanFireAlarm">
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                        <option value="unknown">Unknown</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="preplanOwnerName" class="block text-sm font-medium text-gray-700">Owner Name:</label>
+                    <input type="text" id="preplanOwnerName" name="preplanOwnerName">
+                </div>
+                <div>
+                    <label for="preplanOwnerNumber" class="block text-sm font-medium text-gray-700">Owner Number:</label>
+                    <input type="text" id="preplanOwnerNumber" name="preplanOwnerNumber">
+                </div>
+                <div>
+                    <label for="preplanGateCode" class="block text-sm font-medium text-gray-700">Gate Code:</label>
+                    <input type="text" id="preplanGateCode" name="preplanGateCode">
+                </div>
+                <div class="btnrow" style="margin-top: 16px; justify-content: flex-end;">
+                    <button type="button" id="cancelPreplanBtn" class="ghost">Cancel</button>
+                    <button type="submit" class="primary" id="savePreplanBtn">Save Preplan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- The Generic Marker Edit Modal -->
+    <div id="editMarkerModal" class="modal">
+        <div class="modal-content">
+            <h2 id="markerModalTitle">Edit Marker</h2>
+            <form id="markerForm" class="flex flex-col gap-4">
+                <input type="hidden" id="markerTypeInput">
+                <input type="hidden" id="markerPreplanIndexInput">
+                <input type="hidden" id="markerIndexInput">
+                <div id="markerFormContent">
+                    <div>
+                        <label for="markerIdInput" class="block text-sm font-medium text-gray-700">ID:</label>
+                        <input type="text" id="markerIdInput" name="markerIdInput" required>
+                    </div>
+                </div>
+                <div class="btnrow" style="margin-top: 16px; justify-content: flex-end;">
+                    <button type="button" id="cancelMarkerBtn" class="ghost">Cancel</button>
+                    <button type="submit" class="primary" id="saveMarkerBtn">Save Marker</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <h2 id="confirmTitle">Confirm Deletion</h2>
+            <p id="confirmMessage">Are you sure you want to delete this marker?</p>
+            <div class="btnrow" style="justify-content: flex-end; margin-top: 16px;">
+                <button id="cancelConfirmBtn" class="ghost">Cancel</button>
+                <button id="okConfirmBtn" class="primary">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Expanded Photo Modal -->
+    <div id="photoModal" class="modal" style="display: none;">
+        <span class="close-btn">&times;</span>
+        <div class="modal-content">
+            <img id="expandedImage" src="" alt="Expanded Image">
+        </div>
+    </div>
+
+    <script>
+        // ------------------------------------------------------------
+        // 1) CONFIG: Initial view and SAMPLE hydrants
+        // ------------------------------------------------------------
+
+        // Center on Cheviot, Ohio by default
+        const INITIAL_CENTER = [39.16952, -84.51764];
+        const INITIAL_ZOOM = 16;
+
+        // Load data from localStorage, or start with an empty array.
+        let HYDRANTS = JSON.parse(localStorage.getItem('savedHydrants')) || [];
+        let PREPLANS = JSON.parse(localStorage.getItem('savedPreplans')) || [];
+
+        // ------------------------------------------------------------
+        // 2) CONFIG: Department-editable SOP rules (simple & transparent)
+        // Return a structured recommendation given distance + occupancy
+        // ------------------------------------------------------------
+        const SLACK_FACTOR = 1.2;
+
+        function recommendLine(distanceFt, occupancy) {
+            const d = distanceFt * SLACK_FACTOR;
+            const roundUp50 = (x) => Math.ceil(x / 50) * 50;
+            const suggestedStretch = roundUp50(d);
+
+            let rec = {
+                primary: "1¾\" attack line (200–250 ft) with 150–185 GPM nozzle",
+                backup: "Second 1¾\" or 2\" line as needed",
+                notes: [`Suggested stretch ~ ${suggestedStretch} ft (includes slack).`]
+            };
+
+            switch (occupancy) {
+                case "residential":
+                    if (d <= 200) { rec.primary = "1¾\" preconnect (200–250 ft), 150–185 GPM"; rec.backup = "Backup 1¾\" or 2\""; }
+                    else if (d <= 300) { rec.primary = "2\" line (200–300 ft), 200+ GPM"; rec.backup = "2½\" as backup for flow/reach"; }
+                    else { rec.primary = "2½\" attack or 3\" leader w/ 1¾\" break-off near door"; rec.backup = "Consider moving pumper up / add company"; rec.notes.push("Long stretch — consider re-positioning closer if possible."); }
+                    break;
+                case "multires":
+                    if (d <= 200) { rec.primary = "1¾\" preconnect (150–200 ft), 150–185 GPM"; rec.backup = "2\" as backup for possible volume"; }
+                    else if (d <= 300) { rec.primary = "2\" line (200–300 ft), 200+ GPM"; rec.backup = "2½\" for volume/stand-off"; }
+                    else { rec.primary = "2½\" or 3\" leader with gated wye to 1¾\" at entry"; rec.backup = "Second line for hallway protection"; rec.notes.push("Account for interior common areas/long hallways."); }
+                    break;
+                case "commercial":
+                    if (d <= 150) { rec.primary = "2½\" attack line (250+ GPM) — commercial fireload"; rec.backup = "Second 2½\" or portable monitor"; }
+                    else if (d <= 300) { rec.primary = "2½\" (250+ GPM), consider smooth bore"; rec.backup = "Blitz line / portable monitor"; }
+                    else { rec.primary = "3\" leader to gated wye; 2½\" attack near door"; rec.backup = "Portable monitor; evaluate re-positioning"; rec.notes.push("Distance/flow indicate larger line & possible master stream."); }
+                    break;
+                case "industrial":
+                    if (d <= 150) { rec.primary = "2½\" attack (250–325+ GPM) — high fireload"; rec.backup = "Portable monitor / additional 2½\""; }
+                    else if (d <= 300) { rec.primary = "2½\" or 3\" leader w/ 2½\" finish"; rec.backup = "Blitz/monitor; exposure protection"; }
+                    else { rec.primary = "3\" leader + gated wye, 2½\" near seat or monitor"; rec.backup = "Consider defensive posture if conditions dictate"; rec.notes.push("Long lay; prioritize water supply & big water."); }
+                    break;
+                case "school":
+                    if (d <= 200) { rec.primary = "2\" line (200+ GPM) for larger compartments"; rec.backup = "2½\" backup; prioritize search/evac"; }
+                    else if (d <= 300) { rec.primary = "2½\" preferred for reach/volume"; rec.backup = "Second 2½\" or monitor for coverage"; }
+                    else { rec.primary = "3\" leader + gated wye; 2\"/2½\" inside"; rec.backup = "Monitor; consider re-positioning for shorter stretch"; }
+                    break;
+                case "highrise":
+                    rec.primary = "Standpipe operation: 2½\" from floor below, smooth bore tip";
+                    rec.backup = "Reduce to 1¾\" only per SOPs/risers after control";
+                    rec.notes.push("Hook to FDC; pumper supports standpipe. Distance street→door less critical than riser layout.");
+                    break;
+            }
+            return { ...rec, suggestedStretch };
+        }
+
+        // ------------------------------------------------------------
+        // 3) MAP + STATE
+        // ------------------------------------------------------------
+        const map = L.map('map', { zoomControl: true }).setView(INITIAL_CENTER, INITIAL_ZOOM);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 20,
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+
+        // Icons
+        const iconPumper = L.divIcon({ html: '<div style="width:14px;height:14px;background:#1f77b4;border:2px solid #0d3d74;border-radius:50%"></div>', className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
+        const iconBuilding = L.divIcon({ html: '<div style="width:14px;height:14px;background:#d62728;border:2px solid #7a1515;border-radius:4px"></div>', className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
+        const iconHydrant = L.divIcon({ html: '<div style="width:10px;height:10px;background:#2ca02c;border:2px solid #195d19;border-radius:50%"></div>', className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
+        const iconHydrantPick = L.divIcon({ html: '<div style="width:12px;height:12px;background:#9467bd;border:2px solid #4e2b7a;border-radius:50%"></div>', className: '', iconSize: [16, 16], iconAnchor: [8, 8] });
+        const iconPreplan = L.divIcon({ html: '<div style="width:10px;height:10px;background:#f59e0b;border:2px solid #b47b0a;border-radius:50%"></div>', className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
+        const iconStandpipe = L.divIcon({ html: '<div style="width:10px;height:10px;background:#c0c0c0;border:2px solid #5a5a5a;border-radius:50%"></div>', className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
+        const iconFDC = L.divIcon({ html: '<div style="width:10px;height:10px;background:#319795;border:2px solid #0f4c4b;border-radius:50%"></div>', className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
+
+        // State
+        let mode = null;
+        let pumperMarker = null, buildingMarker = null;
+        let hydrantMarkers = [];
+        let preplanMarkers = [];
+        let nearestHydrantMarker = null;
+        let tempPreplanMarker = null;
+        let tempStandpipeMarkers = [];
+        let tempFDCMarkers = [];
+        let linePumperToBuilding = null, linePumperToHydrant = null;
+
+        // UI refs
+        const btnPumper = document.getElementById('btnPumper');
+        const btnBuilding = document.getElementById('btnBuilding');
+        const btnPreplan = document.getElementById('btnPreplan');
+        const btnHydrant = document.getElementById('btnHydrant');
+        const btnReset = document.getElementById('btnReset');
+        const btype = document.getElementById('btype');
+        const preplanModal = document.getElementById('preplanModal');
+        const preplanForm = document.getElementById('preplanForm');
+        const cancelPreplanBtn = document.getElementById('cancelPreplanBtn');
+        const editMarkerModal = document.getElementById('editMarkerModal');
+        const markerForm = document.getElementById('markerForm');
+        const cancelMarkerBtn = document.getElementById('cancelMarkerBtn');
+        const markerTypeInput = document.getElementById('markerTypeInput');
+        const markerPreplanIndexInput = document.getElementById('markerPreplanIndexInput');
+        const markerIndexInput = document.getElementById('markerIndexInput');
+        const markerIdInput = document.getElementById('markerIdInput');
+        const modalTitle = document.getElementById('modalTitle');
+        const preplanIndexInput = document.getElementById('preplanIndex');
+        const addStandpipeBtn = document.getElementById('addStandpipeBtn');
+        const addFDCBtn = document.getElementById('addFDCBtn');
+        const preplanPhotosInput = document.getElementById('preplanPhotos');
+        const photoPreviewContainer = document.getElementById('photoPreviewContainer');
+
+        const confirmModal = document.getElementById('confirmModal');
+        const confirmTitle = document.getElementById('confirmTitle');
+        const confirmMessage = document.getElementById('confirmMessage');
+        const okConfirmBtn = document.getElementById('okConfirmBtn');
+        const cancelConfirmBtn = document.getElementById('cancelConfirmBtn');
+        
+        const photoModal = document.getElementById('photoModal');
+        const expandedImage = document.getElementById('expandedImage');
+        const closeBtn = document.querySelector('#photoModal .close-btn');
+
+        const pumperVal = document.getElementById('pumperVal');
+        const buildingVal = document.getElementById('buildingVal');
+        const distVal = document.getElementById('distVal');
+        const stretchVal = document.getElementById('stretchVal');
+        const hydrantVal = document.getElementById('hydrantVal');
+        const hydrantDistVal = document.getElementById('hydrantDistVal');
+        const recLine = document.getElementById('recLine');
+
+        function fmtLatLng(latlng) {
+            return `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+        }
+
+        function setMode(newMode) {
+            mode = newMode;
+            btnPumper.classList.toggle('primary', mode === 'pumper');
+            btnBuilding.classList.toggle('primary', mode === 'building');
+            btnPreplan.classList.toggle('primary', mode === 'preplan');
+            btnHydrant.classList.toggle('primary', mode === 'hydrant');
+        }
+        
+        // Function to create a photo preview element and attach listeners
+        function createPhotoPreview(src) {
+            const imgWrapper = document.createElement('div');
+            imgWrapper.className = 'photo-preview-wrapper';
+            const img = document.createElement('img');
+            img.src = src;
+            img.className = 'photo-preview';
+            img.addEventListener('click', () => {
+                expandedImage.src = img.src;
+                photoModal.style.display = 'flex';
+            });
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = '×';
+            deleteBtn.className = 'photo-delete-btn';
+            deleteBtn.onclick = () => imgWrapper.remove();
+            imgWrapper.appendChild(img);
+            imgWrapper.appendChild(deleteBtn);
+            return imgWrapper;
+        }
+
+        // Expanded photo modal close logic
+        closeBtn.onclick = () => {
+            photoModal.style.display = 'none';
+        }
+        window.onclick = (event) => {
+            if (event.target == photoModal) {
+                photoModal.style.display = 'none';
+            }
+        }
+
+        btnPumper.addEventListener('click', () => setMode('pumper'));
+        btnBuilding.addEventListener('click', () => setMode('building'));
+        btnPreplan.addEventListener('click', () => setMode('preplan'));
+        btnHydrant.addEventListener('click', () => setMode('hydrant'));
+        btnReset.addEventListener('click', resetAll);
+        btype.addEventListener('change', updateEverything);
+
+        // Sub-modes for preplan creation
+        let preplanSubMode = null;
+        addStandpipeBtn.addEventListener('click', () => {
+            preplanSubMode = 'standpipe';
+            preplanModal.style.display = 'none';
+        });
+        addFDCBtn.addEventListener('click', () => {
+            preplanSubMode = 'fdc';
+            preplanModal.style.display = 'none';
+        });
+
+// --- Measurement Tool ---
+let measuring = false;
+let startLatLng = null;
+let tempRect = null;
+
+const measureBuildingBtn = document.getElementById('measureBuildingBtn');
+measureBuildingBtn.addEventListener('click', () => {
+    measuring = true;
+    preplanModal.style.display = 'none'; // hide modal while measuring
+    alert("Click and drag on the map to draw the building footprint.");
+});
+
+// Handle map clicks for measurement
+map.on('mousedown', (e) => {
+    if (!measuring) return;
+    startLatLng = e.latlng;
+    if (tempRect) map.removeLayer(tempRect);
+});
+
+map.on('mousemove', (e) => {
+    if (!measuring || !startLatLng) return;
+    if (tempRect) map.removeLayer(tempRect);
+    const bounds = L.latLngBounds(startLatLng, e.latlng);
+    tempRect = L.rectangle(bounds, {color: "#ff7800", weight: 2}).addTo(map);
+});
+
+map.on('mouseup', (e) => {
+    if (!measuring || !startLatLng) return;
+    const bounds = L.latLngBounds(startLatLng, e.latlng);
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+
+    // Calculate width & height in feet
+    const west = turf.point([sw.lng, sw.lat]);
+    const east = turf.point([ne.lng, sw.lat]);
+    const south = turf.point([sw.lng, sw.lat]);
+    const north = turf.point([sw.lng, ne.lat]);
+
+    const widthFt = turf.distance(west, east, {units:'miles'}) * 5280;
+    const heightFt = turf.distance(south, north, {units:'miles'}) * 5280;
+    const sqft = Math.round(widthFt * heightFt);
+
+    measuring = false;
+    startLatLng = null;
+
+    // Remove rectangle after calculation
+    if (tempRect) {
+        map.removeLayer(tempRect);
+        tempRect = null;
+    }
+
+    // Ask user to confirm/edit
+    const userInput = prompt(`Estimated area: ${sqft} sq ft. Enter new value or confirm:`, sqft);
+    if (userInput !== null) {
+        // Store the raw sqft value
+        document.getElementById('preplanSqFt').value = closestSqFtCategory(userInput);
+        document.getElementById('preplanSqFt').dataset.rawSqFt = userInput; // keep exact value if needed
+    }
+
+    // Reopen modal
+    preplanModal.style.display = 'block';
+});
+
+// Helper: map raw sqft to dropdown category
+function closestSqFtCategory(value) {
+    const v = parseInt(value, 10);
+    if (v < 2500) return "<2,500";
+    if (v < 5000) return "2,500-5,000";
+    if (v < 10000) return "5,000-10,000";
+    return ">10,000";
+}
+
+
+
+
+        // --- Hydrant Functions ---
+        const hydrantLayer = L.layerGroup().addTo(map);
+        function renderHydrants() {
+            hydrantLayer.clearLayers();
+            hydrantMarkers = HYDRANTS.map((h, index) => {
+                const marker = L.marker([h.lat, h.lng], { icon: iconHydrant })
+                    .addTo(hydrantLayer);
+                
+                const popupContent = document.createElement('div');
+                popupContent.innerHTML = `
+                    <h3>Hydrant ${h.id}</h3>
+                    <p class="muted">
+                        Lat: ${h.lat.toFixed(5)}<br>
+                        Lng: ${h.lng.toFixed(5)}
+                    </p>
+                    <div class="btnrow" style="margin-top:10px;">
+                        <button class="ghost edit-marker" data-type="hydrant" data-index="${index}">Edit</button>
+                        <button class="ghost delete-marker" data-type="hydrant" data-index="${index}">Delete</button>
+                    </div>
+                `;
+
+                popupContent.querySelector('.edit-marker').addEventListener('click', () => editMarker('hydrant', index));
+                popupContent.querySelector('.delete-marker').addEventListener('click', () => showConfirmDelete('hydrant', index));
+
+                marker.bindPopup(popupContent);
+                marker.feature = { type: 'Feature', geometry: { type: 'Point', coordinates: [h.lng, h.lat] }, properties: { id: h.id } };
+                return marker;
+            });
+        }
+        renderHydrants();
+
+        // --- Preplan Functions ---
+        const preplanLayer = L.layerGroup().addTo(map);
+        function renderPreplans() {
+            preplanLayer.clearLayers();
+            preplanMarkers = PREPLANS.map((p, preplanIndex) => {
+                const marker = L.marker([p.lat, p.lng], { icon: iconPreplan }).addTo(preplanLayer);
+                
+                // Add standpipe and FDC markers associated with this preplan
+                if (p.standpipeLocations) {
+                    p.standpipeLocations.forEach((loc, index) => {
+                        const standpipeMarker = L.marker(loc, { icon: iconStandpipe }).addTo(preplanLayer);
+                        const popupContent = document.createElement('div');
+                        popupContent.innerHTML = `
+                            <h3>Standpipe Connection</h3>
+                            <div class="btnrow" style="margin-top:10px;">
+                                <button class="ghost edit-marker" data-type="standpipe" data-preplan-index="${preplanIndex}" data-index="${index}">Edit</button>
+                                <button class="ghost delete-marker" data-type="standpipe" data-preplan-index="${preplanIndex}" data-index="${index}">Delete</button>
+                            </div>
+                        `;
+                        standpipeMarker.bindPopup(popupContent);
+                        standpipeMarker.on('popupopen', () => {
+                             popupContent.querySelector('.edit-marker').addEventListener('click', () => editMarker('standpipe', index, preplanIndex));
+                             popupContent.querySelector('.delete-marker').addEventListener('click', () => showConfirmDelete('standpipe', index, preplanIndex));
+                        });
+                    });
+                }
+                if (p.fdcLocations) {
+                    p.fdcLocations.forEach((loc, index) => {
+                        const fdcMarker = L.marker(loc, { icon: iconFDC }).addTo(preplanLayer);
+                        const popupContent = document.createElement('div');
+                        popupContent.innerHTML = `
+                            <h3>Fire Department Connection</h3>
+                            <div class="btnrow" style="margin-top:10px;">
+                                <button class="ghost edit-marker" data-type="fdc" data-preplan-index="${preplanIndex}" data-index="${index}">Edit</button>
+                                <button class="ghost delete-marker" data-type="fdc" data-preplan-index="${preplanIndex}" data-index="${index}">Delete</button>
+                            </div>
+                        `;
+                        fdcMarker.bindPopup(popupContent);
+                        fdcMarker.on('popupopen', () => {
+                             popupContent.querySelector('.edit-marker').addEventListener('click', () => editMarker('fdc', index, preplanIndex));
+                             popupContent.querySelector('.delete-marker').addEventListener('click', () => showConfirmDelete('fdc', index, preplanIndex));
+                        });
+                    });
+                }
+                
+                let sqftValue = 0;
+                switch(p.sqft) {
+                    case "<2,500":
+                        sqftValue = 1250;
+                        break;
+                    case "2,500-5,000":
+                        sqftValue = 3750;
+                        break;
+                    case "5,000-10,000":
+                        sqftValue = 7500;
+                        break;
+                    case ">10,000":
+                        sqftValue = 12500;
+                        break;
+                }
+                const suggestedWater = Math.round(sqftValue * 0.5);
+
+                const popupContent = document.createElement('div');
+                let photosHtml = '';
+                if (p.photos && p.photos.length > 0) {
+                    photosHtml = `<div class="photo-preview-container" style="margin-top: 10px;">${p.photos.map(photo => `<img src="${photo}" class="photo-preview">`).join('')}</div>`;
+                }
+
+                popupContent.innerHTML = `
+                    <h3>${p.name}</h3>
+                    <p class="muted">
+                        <b>Floors:</b> ${p.floors}<br>
+                        <b>SqFt:</b> ${p.sqft}<br>
+                        <b>Suggested Water:</b> ${suggestedWater} GPM (SF x 50%)<br>
+                        <b>Occupancy:</b> ${p.occupancy}<br>
+                        <b>Sprinkler:</b> ${p.sprinkler}<br>
+                        <b>Fire Alarm:</b> ${p.fireAlarm}<br>
+                        <b>Owner:</b> ${p.ownerName} (${p.ownerNumber})<br>
+                        <b>Gate Code:</b> ${p.gateCode}<br>
+                        <b>Hazards:</b> ${p.hazards}<br>
+                        <b>Notes:</b> ${p.notes}
+                    </p>
+                    ${photosHtml}
+                    <div class="btnrow" style="margin-top:10px;">
+                        <button class="ghost edit-preplan" data-index="${preplanIndex}">Edit</button>
+                        <button class="ghost delete-preplan" data-index="${preplanIndex}">Delete</button>
+                    </div>
+                `;
+                
+                // Add click handlers for image previews in the popup
+                popupContent.querySelectorAll('.photo-preview').forEach(img => {
+                    img.addEventListener('click', () => {
+                        expandedImage.src = img.src;
+                        photoModal.style.display = 'flex';
+                    });
+                });
+
+                // Add click handlers for the new buttons
+                popupContent.querySelector('.edit-preplan').addEventListener('click', () => editPreplan(preplanIndex));
+                popupContent.querySelector('.delete-preplan').addEventListener('click', () => showConfirmDelete('preplan', preplanIndex));
+
+                marker.bindPopup(popupContent);
+                return marker;
+            });
+        }
+        renderPreplans();
+        
+        // --- Generic Marker Edit/Delete Logic ---
+        function showConfirmDelete(type, index, preplanIndex = null) {
+            confirmModal.style.display = 'block';
+            map.closePopup();
+
+            confirmTitle.textContent = `Delete ${type === 'preplan' ? 'Preplan' : type} Marker?`;
+            confirmMessage.textContent = `Are you sure you want to delete this ${type} marker? This action cannot be undone.`;
+
+            okConfirmBtn.onclick = () => {
+                deleteMarker(type, index, preplanIndex);
+                confirmModal.style.display = 'none';
+            };
+            
+            cancelConfirmBtn.onclick = () => {
+                confirmModal.style.display = 'none';
+            };
+        }
+
+        function deleteMarker(type, index, preplanIndex = null) {
+            if (type === 'hydrant') {
+                HYDRANTS.splice(index, 1);
+                localStorage.setItem('savedHydrants', JSON.stringify(HYDRANTS));
+                renderHydrants();
+                updateEverything();
+            } else if (type === 'preplan') {
+                PREPLANS.splice(index, 1);
+                localStorage.setItem('savedPreplans', JSON.stringify(PREPLANS));
+                renderPreplans();
+            } else {
+                const preplan = PREPLANS[preplanIndex];
+                if (type === 'fdc') {
+                    preplan.fdcLocations.splice(index, 1);
+                } else if (type === 'standpipe') {
+                    preplan.standpipeLocations.splice(index, 1);
+                }
+                localStorage.setItem('savedPreplans', JSON.stringify(PREPLANS));
+                renderPreplans();
+            }
+        }
+        
+        function editMarker(type, index, preplanIndex = null) {
+            markerTypeInput.value = type;
+            markerIndexInput.value = index;
+            markerPreplanIndexInput.value = preplanIndex;
+            
+            let id = '';
+            if (type === 'hydrant') {
+                id = HYDRANTS[index].id;
+                document.getElementById('markerModalTitle').textContent = `Edit Hydrant ${id}`;
+                document.getElementById('markerIdInput').value = id;
+                document.getElementById('markerIdInput').style.display = 'block';
+                document.querySelector('label[for="markerIdInput"]').style.display = 'block';
+            } else {
+                document.getElementById('markerModalTitle').textContent = `Edit ${type === 'fdc' ? 'Fire Department Connection' : 'Standpipe'}`;
+                document.getElementById('markerIdInput').style.display = 'none';
+                document.querySelector('label[for="markerIdInput"]').style.display = 'none';
+            }
+            
+            editMarkerModal.style.display = 'block';
+        }
+        
+        markerForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const type = markerTypeInput.value;
+            const index = markerIndexInput.value;
+            const preplanIndex = markerPreplanIndexInput.value;
+            const newId = markerIdInput.value;
+
+            if (type === 'hydrant') {
+                const hydrant = HYDRANTS[index];
+                hydrant.id = newId;
+                localStorage.setItem('savedHydrants', JSON.stringify(HYDRANTS));
+                renderHydrants();
+                updateEverything();
+            }
+            
+            editMarkerModal.style.display = 'none';
+        });
+
+        cancelMarkerBtn.addEventListener('click', () => {
+            editMarkerModal.style.display = 'none';
+        });
+
+        function editPreplan(index) {
+            const preplan = PREPLANS[index];
+            preplanIndexInput.value = index;
+            document.getElementById('preplanName').value = preplan.name;
+            document.getElementById('preplanHazards').value = preplan.hazards;
+            document.getElementById('preplanNotes').value = preplan.notes;
+            document.getElementById('preplanFloors').value = preplan.floors;
+            document.getElementById('preplanSqFt').value = preplan.sqft;
+            document.getElementById('preplanOccupancy').value = preplan.occupancy;
+            document.getElementById('preplanSprinkler').value = preplan.sprinkler;
+            document.getElementById('preplanFireAlarm').value = preplan.fireAlarm;
+            document.getElementById('preplanOwnerName').value = preplan.ownerName;
+            document.getElementById('preplanOwnerNumber').value = preplan.ownerNumber;
+            document.getElementById('preplanGateCode').value = preplan.gateCode;
+            
+            // Clear previous temporary markers
+            clearTempPreplanMarkers();
+
+            // Render existing standpipe and FDC markers from the preplan object
+            if (preplan.standpipeLocations) {
+                preplan.standpipeLocations.forEach(loc => {
+                    const marker = L.marker(loc, { icon: iconStandpipe }).addTo(map);
+                    tempStandpipeMarkers.push(marker);
+                });
+            }
+            if (preplan.fdcLocations) {
+                preplan.fdcLocations.forEach(loc => {
+                    const marker = L.marker(loc, { icon: iconFDC }).addTo(map);
+                    tempFDCMarkers.push(marker);
+                });
+            }
+
+            // Render existing photos
+            photoPreviewContainer.innerHTML = '';
+            if (preplan.photos) {
+                preplan.photos.forEach(photo => {
+                    photoPreviewContainer.appendChild(createPhotoPreview(photo));
+                });
+            }
+
+            modalTitle.textContent = "Edit Preplan";
+            preplanModal.style.display = 'block';
+        }
+
+        // --- Map Click Handler ---
+        map.on('click', (e) => {
+            if (preplanSubMode) {
+                if (preplanSubMode === 'standpipe') {
+                    const marker = L.marker(e.latlng, { icon: iconStandpipe }).addTo(map).bindTooltip('Standpipe', {permanent:false});
+                    tempStandpipeMarkers.push(marker);
+                } else if (preplanSubMode === 'fdc') {
+                    const marker = L.marker(e.latlng, { icon: iconFDC }).addTo(map).bindTooltip('FDC', {permanent:false});
+                    tempFDCMarkers.push(marker);
+                }
+                preplanSubMode = null;
+                preplanModal.style.display = 'block';
+                return;
+            }
+
+            if (!mode) return;
+
+            if (mode === 'pumper') {
+                if (pumperMarker) map.removeLayer(pumperMarker);
+                pumperMarker = L.marker(e.latlng, { icon: iconPumper, draggable: true }).addTo(map).bindTooltip('Pumper', {permanent:false});
+                pumperMarker.on('dragend', updateEverything);
+                pumperVal.textContent = fmtLatLng(e.latlng);
+                setMode(null);
+                updateEverything();
+            } else if (mode === 'building') {
+                if (buildingMarker) map.removeLayer(buildingMarker);
+                buildingMarker = L.marker(e.latlng, { icon: iconBuilding, draggable: true }).addTo(map).bindTooltip('Building', {permanent:false});
+                buildingMarker.on('dragend', updateEverything);
+                buildingVal.textContent = fmtLatLng(e.latlng);
+                setMode(null);
+                updateEverything();
+            } else if (mode === 'preplan') {
+                if (tempPreplanMarker) {
+                    map.removeLayer(tempPreplanMarker);
+                }
+                tempPreplanMarker = L.marker(e.latlng, { icon: iconPreplan }).addTo(map);
+                
+                // Clear the form and set modal to 'create' mode
+                preplanForm.reset();
+                preplanIndexInput.value = '';
+                photoPreviewContainer.innerHTML = '';
+                clearTempPreplanMarkers();
+                modalTitle.textContent = "Create New Preplan";
+                preplanModal.style.display = 'block';
+                setMode(null); // Reset mode after placing initial preplan marker
+            } else if (mode === 'hydrant') {
+                 // Create a new hydrant with a temporary ID
+                const newId = `H-${HYDRANTS.length + 1}`;
+                HYDRANTS.push({ id: newId, lat: e.latlng.lat, lng: e.latlng.lng });
+                localStorage.setItem('savedHydrants', JSON.stringify(HYDRANTS));
+                renderHydrants();
+                setMode(null);
+                updateEverything();
+            }
+        });
+
+        // --- Preplan Modal and Form Logic ---
+        preplanPhotosInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            photoPreviewContainer.innerHTML = ''; // Clear previous previews
+            for (const file of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    photoPreviewContainer.appendChild(createPhotoPreview(e.target.result));
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        preplanForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const preplanName = document.getElementById('preplanName').value;
+            const preplanHazards = document.getElementById('preplanHazards').value;
+            const preplanNotes = document.getElementById('preplanNotes').value;
+            const preplanFloors = document.getElementById('preplanFloors').value;
+            const preplanSqFt = document.getElementById('preplanSqFt').value;
+            const preplanOccupancy = document.getElementById('preplanOccupancy').value;
+            const preplanSprinkler = document.getElementById('preplanSprinkler').value;
+            const preplanFireAlarm = document.getElementById('preplanFireAlarm').value;
+            const preplanOwnerName = document.getElementById('preplanOwnerName').value;
+            const preplanOwnerNumber = document.getElementById('preplanOwnerNumber').value;
+            const preplanGateCode = document.getElementById('preplanGateCode').value;
+
+            // Get photo data from the preview container
+            const photoElements = photoPreviewContainer.querySelectorAll('img');
+            const photos = Array.from(photoElements).map(img => img.src);
+
+            const standpipeLocations = tempStandpipeMarkers.map(m => m.getLatLng());
+            const fdcLocations = tempFDCMarkers.map(m => m.getLatLng());
+
+            const index = preplanIndexInput.value;
+
+            if (index !== '') {
+                // Edit existing preplan
+                const preplan = PREPLANS[index];
+                preplan.name = preplanName;
+                preplan.hazards = preplanHazards;
+                preplan.notes = preplanNotes;
+                preplan.floors = preplanFloors;
+                preplan.sqft = preplanSqFt;
+                preplan.occupancy = preplanOccupancy;
+                preplan.sprinkler = preplanSprinkler;
+                preplan.fireAlarm = preplanFireAlarm;
+                preplan.ownerName = preplanOwnerName;
+                preplan.ownerNumber = preplanOwnerNumber;
+                preplan.gateCode = preplanGateCode;
+                preplan.photos = photos;
+                preplan.standpipeLocations = standpipeLocations;
+                preplan.fdcLocations = fdcLocations;
+            } else {
+                // Create new preplan
+                const latlng = tempPreplanMarker.getLatLng();
+                const newPreplan = {
+                    lat: latlng.lat,
+                    lng: latlng.lng,
+                    name: preplanName,
+                    hazards: preplanHazards,
+                    notes: preplanNotes,
+                    photos: photos,
+                    standpipeLocations: standpipeLocations,
+                    fdcLocations: fdcLocations,
+                    floors: preplanFloors,
+                    sqft: preplanSqFt,
+                    occupancy: preplanOccupancy,
+                    sprinkler: preplanSprinkler,
+                    fireAlarm: preplanFireAlarm,
+                    ownerName: preplanOwnerName,
+                    ownerNumber: preplanOwnerNumber,
+                    gateCode: preplanGateCode
+                };
+                PREPLANS.push(newPreplan);
+            }
+            
+            localStorage.setItem('savedPreplans', JSON.stringify(PREPLANS));
+
+            preplanModal.style.display = 'none';
+            preplanForm.reset();
+            if (tempPreplanMarker) {
+                map.removeLayer(tempPreplanMarker);
+                tempPreplanMarker = null;
+            }
+            clearTempPreplanMarkers();
+            setMode(null);
+            renderPreplans();
+        });
+
+        cancelPreplanBtn.addEventListener('click', () => {
+            preplanModal.style.display = 'none';
+            preplanForm.reset();
+            if (tempPreplanMarker) {
+                map.removeLayer(tempPreplanMarker);
+                tempPreplanMarker = null;
+            }
+            clearTempPreplanMarkers();
+            setMode(null);
+        });
+
+        function clearTempPreplanMarkers() {
+            tempStandpipeMarkers.forEach(m => map.removeLayer(m));
+            tempFDCMarkers.forEach(m => map.removeLayer(m));
+            tempStandpipeMarkers = [];
+            tempFDCMarkers = [];
+        }
+
+        function resetAll() {
+            mode = null;
+            preplanSubMode = null;
+            if (pumperMarker) { map.removeLayer(pumperMarker); pumperMarker = null; }
+            if (buildingMarker) { map.removeLayer(buildingMarker); buildingMarker = null; }
+            if (nearestHydrantMarker) { map.removeLayer(nearestHydrantMarker); nearestHydrantMarker = null; }
+            if (linePumperToBuilding) { map.removeLayer(linePumperToBuilding); linePumperToBuilding = null; }
+            if (linePumperToHydrant) { map.removeLayer(linePumperToHydrant); linePumperToHydrant = null; }
+            if (tempPreplanMarker) { map.removeLayer(tempPreplanMarker); tempPreplanMarker = null; }
+            clearTempPreplanMarkers();
+
+            pumperVal.textContent = '—';
+            buildingVal.textContent = '—';
+            distVal.textContent = '—';
+            stretchVal.textContent = '—';
+            hydrantVal.textContent = '—';
+            hydrantDistVal.textContent = '—';
+            btype.value = '';
+
+            recLine.innerHTML = '<i class="muted">Pick a building type to see line recommendations.</i>';
+            setMode(null);
+        }
+
+        function updateEverything() {
+            if (linePumperToBuilding) { map.removeLayer(linePumperToBuilding); linePumperToBuilding = null; }
+            if (linePumperToHydrant) { map.removeLayer(linePumperToHydrant); linePumperToHydrant = null; }
+            if (nearestHydrantMarker) { map.removeLayer(nearestHydrantMarker); nearestHydrantMarker = null; }
+
+            if (pumperMarker) pumperVal.textContent = fmtLatLng(pumperMarker.getLatLng());
+            if (buildingMarker) buildingVal.textContent = fmtLatLng(buildingMarker.getLatLng());
+
+            let distFeet = null;
+            if (pumperMarker && buildingMarker) {
+                const a = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+                const b = turf.point([buildingMarker.getLatLng().lng, buildingMarker.getLatLng().lat]);
+                distFeet = turf.distance(a, b, { units: 'miles' }) * 5280;
+                distVal.textContent = Math.round(distFeet) + ' ft';
+                stretchVal.textContent = Math.round(distFeet * SLACK_FACTOR) + ' ft';
+                linePumperToBuilding = L.polyline([pumperMarker.getLatLng(), buildingMarker.getLatLng()], {
+                    weight: 3, opacity: 0.9, color: '#d62728'
+                }).addTo(map);
+            } else {
+                distVal.textContent = '—';
+                stretchVal.textContent = '—';
+            }
+
+            if (pumperMarker && hydrantMarkers.length) {
+                const pt = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+                const hydrantPoints = turf.featureCollection(hydrantMarkers.map(m => m.feature));
+                const nearest = turf.nearestPoint(pt, hydrantPoints);
+                const h = hydrantMarkers.find(m => m.feature.properties.id === nearest.properties.id);
+                if (h) {
+                    nearestHydrantMarker = L.marker(h.getLatLng(), { icon: iconHydrantPick })
+                        .addTo(map)
+                        .bindTooltip(`Recommended Hydrant ${h.feature.properties.id}`, { direction: 'top', offset: [0, -8] });
+                    linePumperToHydrant = L.polyline([pumperMarker.getLatLng(), h.getLatLng()], {
+                        weight: 3, opacity: 0.9, dashArray: '6,6', color: '#9467bd'
+                    }).addTo(map);
+                    const aa = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+                    const bb = turf.point([h.getLatLng().lng, h.getLatLng().lat]);
+                    const hDistFeet = turf.distance(aa, bb, { units: 'miles' }) * 5280;
+                    hydrantVal.textContent = h.feature.properties.id;
+                    hydrantDistVal.textContent = Math.round(hDistFeet) + ' ft';
+                }
+            } else {
+                hydrantVal.textContent = '—';
+                hydrantDistVal.textContent = '—';
+            }
+
+            const occ = btype.value;
+            if (occ) {
+                if (!pumperMarker || !buildingMarker || distFeet === null) {
+                    recLine.innerHTML = '<span class="muted">Place pumper and building to get a recommendation.</span>';
+                    return;
+                }
+                const rec = recommendLine(distFeet, occ);
+                recLine.innerHTML = `
+                    <div style="line-height:1.35">
+                    <div><b>Primary:</b> ${rec.primary}</div>
+                    <div><b>Backup:</b> ${rec.backup}</div>
+                    <ul style="margin:6px 0 0 18px; padding:0;">
+                    ${rec.notes.map(n => `<li>${n}</li>`).join('')}
+                    </ul>
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>
