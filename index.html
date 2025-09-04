@@ -601,75 +601,79 @@
         });
 
 // --- Measurement Tool ---
-let measuring = false;
-let startLatLng = null;
-let tempRect = null;
+let isDrawingPolygon = false; // NEW: Flag for polygon drawing mode
+let polygonPoints = []; // NEW: Array to store the polygon's vertices
+let tempPolyline = null; // NEW: A temporary line to show the user the shape as they draw
+let tempVertexMarkers = L.layerGroup(); // NEW: Group to hold markers for each clicked point
 
 const measureBuildingBtn = document.getElementById('measureBuildingBtn');
 measureBuildingBtn.addEventListener('click', () => {
-    measuring = true;
-    preplanModal.style.display = 'none'; // hide modal while measuring
+    isDrawingPolygon = true;
+    polygonPoints = []; // Reset points
     
-    // ADD THESE TWO LINES
+    // Clean up any previous drawings
+    if (tempPolyline) map.removeLayer(tempPolyline);
+    tempVertexMarkers.clearLayers();
+    
+    preplanModal.style.display = 'none';
     map.dragging.disable();
     map.getContainer().style.cursor = 'crosshair';
+    map.addLayer(tempVertexMarkers);
 
-    alert("Click and drag on the map to draw the building footprint.");
+    alert("Click points on the map to trace the building's outline.\nDouble-click the last point to finish and calculate the area.");
 });
 
-// Handle map clicks for measurement
-map.on('mousedown', (e) => {
-    if (!measuring) return;
-    startLatLng = e.latlng;
-    if (tempRect) map.removeLayer(tempRect);
+// Add a point on each single click
+map.on('click', (e) => {
+    if (!isDrawingPolygon) return;
+
+    polygonPoints.push(e.latlng);
+
+    // Add a small circle marker for the vertex
+    L.circleMarker(e.latlng, { radius: 4, color: '#ff7800', fillOpacity: 0.8 }).addTo(tempVertexMarkers);
+
+    // Redraw the temporary polyline
+    if (tempPolyline) {
+        map.removeLayer(tempPolyline);
+    }
+    tempPolyline = L.polyline(polygonPoints, { color: '#ff7800', weight: 3, dashArray: '5, 5' }).addTo(map);
 });
 
-map.on('mousemove', (e) => {
-    if (!measuring || !startLatLng) return;
-    if (tempRect) map.removeLayer(tempRect);
-    const bounds = L.latLngBounds(startLatLng, e.latlng);
-    tempRect = L.rectangle(bounds, {color: "#ff7800", weight: 2}).addTo(map);
-});
+// Finish drawing on double-click
+map.on('dblclick', (e) => {
+    if (!isDrawingPolygon || polygonPoints.length < 3) return; // Need at least 3 points for a polygon
 
-map.on('mouseup', (e) => {
-    if (!measuring || !startLatLng) return;
-    
-    // ADD THESE TWO LINES
+    // Finalize and calculate
+    isDrawingPolygon = false;
     map.dragging.enable();
     map.getContainer().style.cursor = '';
 
-    const bounds = L.latLngBounds(startLatLng, e.latlng);
-    const sw = bounds.getSouthWest();
-    const ne = bounds.getNorthEast();
+    // Convert Leaflet LatLngs to GeoJSON format [lng, lat] for Turf.js
+    // Also, close the polygon by adding the first point to the end of the array
+    const turfCoords = polygonPoints.map(p => [p.lng, p.lat]);
+    turfCoords.push(turfCoords[0]); // Close the ring
 
-    // Calculate width & height in feet
-    const west = turf.point([sw.lng, sw.lat]);
-    const east = turf.point([ne.lng, sw.lat]);
-    const south = turf.point([sw.lng, sw.lat]);
-    const north = turf.point([sw.lng, ne.lat]);
+    const turfPolygon = turf.polygon([turfCoords]);
+    const areaInSqMeters = turf.area(turfPolygon);
+    const areaInSqFt = Math.round(areaInSqMeters * 10.7639); // Conversion factor for sq meters to sq feet
 
-    const widthFt = turf.distance(west, east, {units:'miles'}) * 5280;
-    const heightFt = turf.distance(south, north, {units:'miles'}) * 5280;
-    const sqft = Math.round(widthFt * heightFt);
+    // Clean up the temporary drawing layers
+    if (tempPolyline) map.removeLayer(tempPolyline);
+    tempVertexMarkers.clearLayers();
+    map.removeLayer(tempVertexMarkers);
+    
+    // Reset state
+    polygonPoints = [];
+    tempPolyline = null;
 
-    measuring = false;
-    startLatLng = null;
-
-    // Remove rectangle after calculation
-    if (tempRect) {
-        map.removeLayer(tempRect);
-        tempRect = null;
-    }
-
-    // Ask user to confirm/edit
-    const userInput = prompt(`Estimated area: ${sqft} sq ft. Enter new value or confirm:`, sqft);
+    // Ask user to confirm/edit the calculated value
+    const userInput = prompt(`Estimated area: ${areaInSqFt} sq ft. Enter new value or confirm:`, areaInSqFt);
     if (userInput !== null) {
-        // Store the raw sqft value
         document.getElementById('preplanSqFt').value = closestSqFtCategory(userInput);
-        document.getElementById('preplanSqFt').dataset.rawSqFt = userInput; // keep exact value if needed
+        document.getElementById('preplanSqFt').dataset.rawSqFt = userInput;
     }
 
-    // Reopen modal
+    // Reopen the preplan modal
     preplanModal.style.display = 'block';
 });
 
@@ -681,7 +685,6 @@ function closestSqFtCategory(value) {
     if (v < 10000) return "5,000-10,000";
     return ">10,000";
 }
-
 
 
         // --- Hydrant Functions ---
