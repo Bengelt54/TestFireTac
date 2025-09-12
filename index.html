@@ -1080,6 +1080,7 @@
 
         // --- Map Click Handler ---
         map.on('click', (e) => {
+            // This is a refactored click handler to ensure only one mode is active at a time.
             if (isDrawingPolygon) {
                 if (polygonPoints.length > 2) {
                     const firstPoint = polygonPoints[0];
@@ -1094,10 +1095,8 @@
                     map.removeLayer(tempPolyline);
                 }
                 tempPolyline = L.polyline(polygonPoints, { color: '#ff7800', weight: 3, dashArray: '5, 5' }).addTo(map);
-                return;
-            }
 
-            if (isDesignatingSides) {
+            } else if (isDesignatingSides) {
                 const currentSide = SIDES[sideDesignationIndex];
                 const marker = L.marker(e.latlng, { icon: createSideIcon(currentSide), side: currentSide }).addTo(map);
                 tempSideMarkers.push(marker);
@@ -1106,7 +1105,6 @@
                 if (sideDesignationIndex >= SIDES.length) {
                     isDesignatingSides = false;
                     map.getContainer().style.cursor = '';
-                    
                     setTimeout(() => {
                         const redo = confirm("Sides A, B, C, D have been placed. Click OK to restart, or Cancel to accept.");
                         if (redo) {
@@ -1115,14 +1113,11 @@
                             preplanModal.style.display = 'block';
                         }
                     }, 100);
-
                 } else {
-                    alert(`Now place the '${SIDES[sideDesignationIndex]}' side marker.`);
+                     alert(`Now place the '${SIDES[sideDesignationIndex]}' side marker.`);
                 }
-                return;
-            }
 
-            if (preplanSubMode) {
+            } else if (preplanSubMode) {
                 if (preplanSubMode === 'standpipe') {
                     const marker = L.marker(e.latlng, { icon: iconStandpipe }).addTo(map).bindTooltip('Standpipe', {permanent:false});
                     tempStandpipeMarkers.push(marker);
@@ -1132,45 +1127,43 @@
                 }
                 preplanSubMode = null;
                 preplanModal.style.display = 'block';
-                return;
-            }
 
-            if (!mode) return;
-
-            if (mode === 'pumper') {
-                if (pumperMarker) map.removeLayer(pumperMarker);
-                pumperMarker = L.marker(e.latlng, { icon: iconPumper, draggable: true }).addTo(map).bindTooltip('Pumper', {permanent:false});
-                pumperMarker.on('dragend', updateEverything);
-                pumperVal.textContent = fmtLatLng(e.latlng);
-                setMode(null);
-                updateEverything();
-            } else if (mode === 'building') {
-                if (buildingMarker) map.removeLayer(buildingMarker);
-                buildingMarker = L.marker(e.latlng, { icon: iconBuilding, draggable: true }).addTo(map).bindTooltip('Building', {permanent:false});
-                buildingMarker.on('dragend', updateEverything);
-                buildingVal.textContent = fmtLatLng(e.latlng);
-                setMode(null);
-                updateEverything();
-            } else if (mode === 'preplan') {
-                if (tempPreplanMarker) {
-                    map.removeLayer(tempPreplanMarker);
+            } else if (mode) {
+                if (mode === 'pumper') {
+                    if (pumperMarker) map.removeLayer(pumperMarker);
+                    pumperMarker = L.marker(e.latlng, { icon: iconPumper, draggable: true }).addTo(map).bindTooltip('Pumper', {permanent:false});
+                    pumperMarker.on('dragend', updateEverything);
+                    pumperVal.textContent = fmtLatLng(e.latlng);
+                    setMode(null);
+                    updateEverything();
+                } else if (mode === 'building') {
+                    if (buildingMarker) map.removeLayer(buildingMarker);
+                    buildingMarker = L.marker(e.latlng, { icon: iconBuilding, draggable: true }).addTo(map).bindTooltip('Building', {permanent:false});
+                    buildingMarker.on('dragend', updateEverything);
+                    buildingVal.textContent = fmtLatLng(e.latlng);
+                    setMode(null);
+                    updateEverything();
+                } else if (mode === 'preplan') {
+                    if (tempPreplanMarker) {
+                        map.removeLayer(tempPreplanMarker);
+                    }
+                    tempPreplanMarker = L.marker(e.latlng, { icon: iconPreplan }).addTo(map);
+                    
+                    preplanForm.reset();
+                    preplanIndexInput.value = '';
+                    photoPreviewContainer.innerHTML = '';
+                    clearTempMarkers();
+                    modalTitle.textContent = "Create New Preplan";
+                    preplanModal.style.display = 'block';
+                    setMode(null);
+                } else if (mode === 'hydrant') {
+                    const newId = `H-${HYDRANTS.length + 1}`;
+                    HYDRANTS.push({ id: newId, lat: e.latlng.lat, lng: e.latlng.lng });
+                    localStorage.setItem('savedHydrants', JSON.stringify(HYDRANTS));
+                    renderHydrants();
+                    setMode(null);
+                    updateEverything();
                 }
-                tempPreplanMarker = L.marker(e.latlng, { icon: iconPreplan }).addTo(map);
-                
-                preplanForm.reset();
-                preplanIndexInput.value = '';
-                photoPreviewContainer.innerHTML = '';
-                clearTempMarkers();
-                modalTitle.textContent = "Create New Preplan";
-                preplanModal.style.display = 'block';
-                setMode(null);
-            } else if (mode === 'hydrant') {
-                const newId = `H-${HYDRANTS.length + 1}`;
-                HYDRANTS.push({ id: newId, lat: e.latlng.lat, lng: e.latlng.lng });
-                localStorage.setItem('savedHydrants', JSON.stringify(HYDRANTS));
-                renderHydrants();
-                setMode(null);
-                updateEverything();
             }
         });
 
@@ -1310,6 +1303,7 @@
 
             recLine.innerHTML = '<i class="muted">Pick a building type to see line recommendations.</i>';
             setMode(null);
+            updateEverything();
         }
 
         function updateEverything() {
