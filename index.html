@@ -211,12 +211,11 @@
 
             <div class="card">
                 <h2>Workflow</h2>
-                <ol style="margin:0 0 6px 18px">
-                    <li>Click a button to select your placement mode.</li>
-                    <li>Click on the map to place the item.</li>
-                </ol>
+                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                     <input type="text" id="pumperNameInput" placeholder="Pumper Name (e.g., E1)" style="flex-grow: 1;">
+                    <button id="btnPumper" class="primary">Place</button>
+                </div>
                 <div class="btnrow">
-                    <button id="btnPumper" class="primary">Place Pumper</button>
                     <button id="btnBuilding" class="primary">Select Building</button>
                     <button id="btnPreplan" class="primary">Create Preplan</button>
                     <button id="btnHydrant" class="primary">Place Hydrant</button>
@@ -241,8 +240,8 @@
 
             <div class="card">
                 <h2>Results</h2>
-                <div class="kv">
-                    <div>Pumper</div><div id="pumperVal" class="mono">—</div>
+                <div class="kv" id="resultsKv">
+                    <div id="pumperInfoContainer"></div>
                     <div>Building</div><div id="buildingVal" class="mono">—</div>
                     <div>Distance (ft)</div><div id="distVal">—</div>
                     <div>Suggested Stretch (ft)</div><div id="stretchVal">—</div>
@@ -500,7 +499,6 @@
         streetLayer.addTo(map);
 
         // Icons
-        const iconPumper = L.divIcon({ html: '<div style="width:14px;height:14px;background:#1f77b4;border:2px solid #0d3d74;border-radius:50%"></div>', className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
         const iconBuilding = L.divIcon({ html: '<div style="width:14px;height:14px;background:#d62728;border:2px solid #7a1515;border-radius:4px"></div>', className: '', iconSize: [18, 18], iconAnchor: [9, 9] });
         const iconHydrant = L.divIcon({ html: '<div style="width:10px;height:10px;background:#2ca02c;border:2px solid #195d19;border-radius:50%"></div>', className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
         const iconHydrantPick = L.divIcon({ html: '<div style="width:12px;height:12px;background:#9467bd;border:2px solid #4e2b7a;border-radius:50%"></div>', className: '', iconSize: [16, 16], iconAnchor: [8, 8] });
@@ -510,7 +508,10 @@
 
         // State
         let mode = null;
-        let pumperMarker = null, buildingMarker = null;
+        let pumperMarkers = new Map();
+        let primaryPumperName = null;
+        let currentPumperName = null;
+        let buildingMarker = null;
         let hydrantMarkers = [];
         let preplanMarkers = [];
         let nearestHydrantMarker = null;
@@ -527,6 +528,7 @@
 
 
         // UI refs
+        const pumperNameInput = document.getElementById('pumperNameInput');
         const btnPumper = document.getElementById('btnPumper');
         const btnBuilding = document.getElementById('btnBuilding');
         const btnPreplan = document.getElementById('btnPreplan');
@@ -560,7 +562,7 @@
         const expandedImage = document.getElementById('expandedImage');
         const closeBtn = document.querySelector('#photoModal .close-btn');
 
-        const pumperVal = document.getElementById('pumperVal');
+        const pumperInfoContainer = document.getElementById('pumperInfoContainer');
         const buildingVal = document.getElementById('buildingVal');
         const distVal = document.getElementById('distVal');
         const stretchVal = document.getElementById('stretchVal');
@@ -573,8 +575,10 @@
             return `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
         }
 
-        function setMode(newMode) {
+        function setMode(newMode, pumperName = null) {
             mode = newMode;
+            currentPumperName = pumperName; // Store the name of the pumper being placed
+
             btnPumper.classList.toggle('primary', mode === 'pumper');
             btnBuilding.classList.toggle('primary', mode === 'building');
             btnPreplan.classList.toggle('primary', mode === 'preplan');
@@ -608,8 +612,20 @@
                 photoModal.style.display = 'none';
             }
         }
+        
+        btnPumper.addEventListener('click', () => {
+            const name = pumperNameInput.value.trim();
+            if (!name) {
+                alert('Please enter a name for the pumper.');
+                return;
+            }
+            if (pumperMarkers.has(name)) {
+                alert(`A pumper with the name "${name}" already exists.`);
+                return;
+            }
+            setMode('pumper', name);
+        });
 
-        btnPumper.addEventListener('click', () => setMode('pumper'));
         btnBuilding.addEventListener('click', () => setMode('building'));
         btnPreplan.addEventListener('click', () => setMode('preplan'));
         btnHydrant.addEventListener('click', () => setMode('hydrant'));
@@ -689,6 +705,15 @@
             map.getContainer().style.cursor = 'crosshair';
             alert(`Click on the map to place the '${SIDES[sideDesignationIndex]}' side marker.`);
         });
+        
+        function createPumperIcon(pumperName) {
+            return L.divIcon({
+                html: `<div style="background:#1f77b4; color: white; border:2px solid #0d3d74; border-radius:50%; width:24px; height:24px; text-align:center; line-height:20px; font-weight:bold; font-size:10px;">${pumperName}</div>`,
+                className: '',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+        }
         
         function createSideIcon(sideLetter) {
             return L.divIcon({
@@ -1103,7 +1128,6 @@
 
         // --- Map Click Handler ---
         map.on('click', (e) => {
-            // This is a refactored click handler to ensure only one mode is active at a time.
             if (isDrawingPolygon) {
                 if (polygonPoints.length > 2) {
                     const firstPoint = polygonPoints[0];
@@ -1114,9 +1138,7 @@
                 }
                 polygonPoints.push(e.latlng);
                 L.circleMarker(e.latlng, { radius: 4, color: '#ff7800', fillOpacity: 0.8 }).addTo(tempVertexMarkers);
-                if (tempPolyline) {
-                    map.removeLayer(tempPolyline);
-                }
+                if (tempPolyline) map.removeLayer(tempPolyline);
                 tempPolyline = L.polyline(polygonPoints, { color: '#ff7800', weight: 3, dashArray: '5, 5' }).addTo(map);
 
             } else if (isDesignatingSides) {
@@ -1129,7 +1151,7 @@
                     isDesignatingSides = false;
                     map.getContainer().style.cursor = '';
                     showSideDesignationConfirm();
-                } 
+                }
 
             } else if (preplanSubMode) {
                 if (preplanSubMode === 'standpipe') {
@@ -1144,23 +1166,25 @@
 
             } else if (mode) {
                 if (mode === 'pumper') {
-                    if (pumperMarker) map.removeLayer(pumperMarker);
-                    pumperMarker = L.marker(e.latlng, { icon: iconPumper, draggable: true }).addTo(map).bindTooltip('Pumper', {permanent:false});
+                    const pumperMarker = L.marker(e.latlng, { icon: createPumperIcon(currentPumperName), draggable: true }).addTo(map);
                     pumperMarker.on('dragend', updateEverything);
-                    pumperVal.textContent = fmtLatLng(e.latlng);
+                    
+                    pumperMarkers.set(currentPumperName, pumperMarker);
+                    if (!primaryPumperName) {
+                        primaryPumperName = currentPumperName;
+                    }
+                    
                     setMode(null);
+                    pumperNameInput.value = '';
                     updateEverything();
                 } else if (mode === 'building') {
                     if (buildingMarker) map.removeLayer(buildingMarker);
                     buildingMarker = L.marker(e.latlng, { icon: iconBuilding, draggable: true }).addTo(map).bindTooltip('Building', {permanent:false});
                     buildingMarker.on('dragend', updateEverything);
-                    buildingVal.textContent = fmtLatLng(e.latlng);
                     setMode(null);
                     updateEverything();
                 } else if (mode === 'preplan') {
-                    if (tempPreplanMarker) {
-                        map.removeLayer(tempPreplanMarker);
-                    }
+                    if (tempPreplanMarker) map.removeLayer(tempPreplanMarker);
                     tempPreplanMarker = L.marker(e.latlng, { icon: iconPreplan }).addTo(map);
                     
                     preplanForm.reset();
@@ -1299,7 +1323,11 @@
         function resetAll() {
             mode = null;
             preplanSubMode = null;
-            if (pumperMarker) { map.removeLayer(pumperMarker); pumperMarker = null; }
+            
+            pumperMarkers.forEach(marker => map.removeLayer(marker));
+            pumperMarkers.clear();
+            primaryPumperName = null;
+
             if (buildingMarker) { map.removeLayer(buildingMarker); buildingMarker = null; }
             if (nearestHydrantMarker) { map.removeLayer(nearestHydrantMarker); nearestHydrantMarker = null; }
             if (linePumperToBuilding) { map.removeLayer(linePumperToBuilding); linePumperToBuilding = null; }
@@ -1307,7 +1335,6 @@
             if (tempPreplanMarker) { map.removeLayer(tempPreplanMarker); tempPreplanMarker = null; }
             clearTempMarkers();
 
-            pumperVal.textContent = '—';
             buildingVal.textContent = '—';
             distVal.textContent = '—';
             stretchVal.textContent = '—';
@@ -1325,17 +1352,42 @@
             if (linePumperToHydrant) { map.removeLayer(linePumperToHydrant); linePumperToHydrant = null; }
             if (nearestHydrantMarker) { map.removeLayer(nearestHydrantMarker); nearestHydrantMarker = null; }
 
-            if (pumperMarker) pumperVal.textContent = fmtLatLng(pumperMarker.getLatLng());
+            pumperInfoContainer.innerHTML = '';
+            if(pumperMarkers.size === 0) {
+                 pumperInfoContainer.innerHTML = `<div>Pumper</div><div class="mono">—</div>`;
+            } else {
+                 pumperMarkers.forEach((marker, name) => {
+                    const pumperDiv = document.createElement('div');
+                    pumperDiv.innerHTML = `
+                        <div>${name} ${name === primaryPumperName ? '(Primary)' : ''}</div>
+                        <div class="mono">
+                           ${fmtLatLng(marker.getLatLng())}
+                           ${name !== primaryPumperName ? `<button class="ghost" style="padding: 2px 5px; font-size:10px; margin-left:5px;" data-name="${name}">Set Primary</button>` : ''}
+                        </div>
+                    `;
+                    pumperInfoContainer.appendChild(pumperDiv);
+                });
+                pumperInfoContainer.querySelectorAll('button').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        primaryPumperName = e.target.dataset.name;
+                        updateEverything();
+                    });
+                });
+            }
+
+
             if (buildingMarker) buildingVal.textContent = fmtLatLng(buildingMarker.getLatLng());
 
             let distFeet = null;
-            if (pumperMarker && buildingMarker) {
-                const a = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+            const primaryPumper = pumperMarkers.get(primaryPumperName);
+
+            if (primaryPumper && buildingMarker) {
+                const a = turf.point([primaryPumper.getLatLng().lng, primaryPumper.getLatLng().lat]);
                 const b = turf.point([buildingMarker.getLatLng().lng, buildingMarker.getLatLng().lat]);
                 distFeet = turf.distance(a, b, { units: 'miles' }) * 5280;
                 distVal.textContent = Math.round(distFeet) + ' ft';
                 stretchVal.textContent = Math.round(distFeet * SLACK_FACTOR) + ' ft';
-                linePumperToBuilding = L.polyline([pumperMarker.getLatLng(), buildingMarker.getLatLng()], {
+                linePumperToBuilding = L.polyline([primaryPumper.getLatLng(), buildingMarker.getLatLng()], {
                     weight: 3, opacity: 0.9, color: '#d62728'
                 }).addTo(map);
             } else {
@@ -1343,8 +1395,8 @@
                 stretchVal.textContent = '—';
             }
 
-            if (pumperMarker && hydrantMarkers.length) {
-                const pt = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+            if (primaryPumper && hydrantMarkers.length) {
+                const pt = turf.point([primaryPumper.getLatLng().lng, primaryPumper.getLatLng().lat]);
                 const hydrantPoints = turf.featureCollection(hydrantMarkers.map(m => m.feature));
                 const nearest = turf.nearestPoint(pt, hydrantPoints);
                 const h = hydrantMarkers.find(m => m.feature.properties.id === nearest.properties.id);
@@ -1352,10 +1404,10 @@
                     nearestHydrantMarker = L.marker(h.getLatLng(), { icon: iconHydrantPick })
                         .addTo(map)
                         .bindTooltip(`Recommended Hydrant ${h.feature.properties.id}`, { direction: 'top', offset: [0, -8] });
-                    linePumperToHydrant = L.polyline([pumperMarker.getLatLng(), h.getLatLng()], {
+                    linePumperToHydrant = L.polyline([primaryPumper.getLatLng(), h.getLatLng()], {
                         weight: 3, opacity: 0.9, dashArray: '6,6', color: '#9467bd'
                     }).addTo(map);
-                    const aa = turf.point([pumperMarker.getLatLng().lng, pumperMarker.getLatLng().lat]);
+                    const aa = turf.point([primaryPumper.getLatLng().lng, primaryPumper.getLatLng().lat]);
                     const bb = turf.point([h.getLatLng().lng, h.getLatLng().lat]);
                     const hDistFeet = turf.distance(aa, bb, { units: 'miles' }) * 5280;
                     hydrantVal.textContent = h.feature.properties.id;
@@ -1368,8 +1420,8 @@
 
             const occ = btype.value;
             if (occ) {
-                if (!pumperMarker || !buildingMarker || distFeet === null) {
-                    recLine.innerHTML = '<span class="muted">Place pumper and building to get a recommendation.</span>';
+                if (!primaryPumper || !buildingMarker || distFeet === null) {
+                    recLine.innerHTML = '<span class="muted">Place primary pumper and building to get a recommendation.</span>';
                     return;
                 }
                 const rec = recommendLine(distFeet, occ);
@@ -1384,6 +1436,8 @@
                 `;
             }
         }
+        // Initial call to set up UI
+        updateEverything();
     </script>
 </body>
 </html>
